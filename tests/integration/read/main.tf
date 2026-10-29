@@ -1,4 +1,4 @@
-# Reads federated identity credentials straight from Azure; fails if one is gone.
+# Reads resources back from Azure, so a test can check what another write left in place.
 terraform {
   required_providers {
     azapi = {
@@ -8,18 +8,23 @@ terraform {
   }
 }
 
-variable "credential_ids" {
-  type = map(string)
+variable "resource_ids" {
+  type        = map(string)
+  description = "Resource IDs to read, by key, each `<type>@<api-version>|<resource ID>`."
 }
 
-data "azapi_resource" "credential" {
-  for_each = var.credential_ids
+data "azapi_resource" "this" {
+  for_each = var.resource_ids
 
-  type                   = "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials@2024-11-30"
-  resource_id            = each.value
-  response_export_values = ["properties.subject"]
+  type                   = split("|", each.value)[0]
+  resource_id            = split("|", each.value)[1]
+  response_export_values = ["properties", "tags"]
 }
 
-output "subjects" {
-  value = { for name, credential in data.azapi_resource.credential : name => credential.output.properties.subject }
+output "properties" {
+  value = { for key, resource in data.azapi_resource.this : key => resource.output.properties }
+}
+
+output "tags" {
+  value = { for key, resource in data.azapi_resource.this : key => try(resource.output.tags, null) }
 }

@@ -1,9 +1,9 @@
-output "principal_id" {
-  description = "Object ID of the identity's service principal."
-  value       = module.user_assigned_identity.principal_id
+output "connectivity" {
+  description = "The contract for subscription vending and firewall rules."
+  value       = module.connectivity.connectivity
 }
 
-output "resource_id" {
-  description = "Resource ID of the user-assigned identity."
-  value       = module.user_assigned_identity.resource_id
+output "hub_virtual_networks" {
+  description = "Each hub's resources."
+  value       = module.connectivity.hub_virtual_networks
 }

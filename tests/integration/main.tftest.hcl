@@ -1,7 +1,10 @@
-# Real Azure, no mocks: ARM_SUBSCRIPTION_ID=<test subscription> terraform test -test-directory=tests/integration
-# Proves what mocks cannot: credentials written in parallel are serialised, survive an update of the
-# identity, can be removed or updated in place under the lock (ReadOnly too), and the lock is removed
-# before everything else on destroy.
+# Real Azure, no mocks: ARM_SUBSCRIPTION_ID=<test subscription> scripts/integration.sh .
+# One hub with a Basic firewall (the cheapest tier) and its management NIC, a StandardV2 NAT gateway, a
+# resolver, a VpnGw1AZ gateway with a site and a connection, and one private DNS zone; about an hour and
+# a half, billed by the hour while it exists, destroyed at the end. Proves what mocks cannot: the building
+# blocks fit together in Azure; the routes and subnet associations land; a route table update keeps its
+# routes; spoke routes are added and removed; forced tunnelling is switched on and off; custom DNS servers
+# are set and removed; the firewall takes its subnet's fifth address; the last plan is clean.
 
 run "setup" {
   module {
@@ -11,191 +14,337 @@ run "setup" {
 
 run "create" {
   variables {
-    name      = "id-mlz-it-${run.setup.suffix}"
-    parent_id = run.setup.resource_group_id
-    location  = run.setup.location
-    federated_identity_credentials = {
-      one   = { issuer = "https://token.actions.githubusercontent.com", subject = "repo:example-org/example-repo:environment:one" }
-      two   = { issuer = "https://token.actions.githubusercontent.com", subject = "repo:example-org/example-repo:environment:two" }
-      three = { issuer = "https://token.actions.githubusercontent.com", subject = "repo:example-org/example-repo:environment:three" }
-    }
-    lock = { kind = "CanNotDelete" }
-    role_assignments = {
-      reader = { role_definition_id_or_name = "Reader", principal_id = run.setup.object_id }
+    parent_id          = run.setup.parent_id
+    connection_secrets = { "swedencentral/office" = "it-${run.setup.suffix}-shared-key" }
+    private_dns_zones  = { resource_group_name = "rg-mlz-hub-it-pdns-${run.setup.suffix}", zone_name_filter = "^privatelink\\.blob\\.core\\." }
+    hub_virtual_networks = {
+      swedencentral = {
+        location                      = run.setup.location
+        address_space                 = ["10.100.0.0/22"]
+        is_primary                    = true
+        name                          = "vnet-mlz-hub-it-${run.setup.suffix}"
+        resource_group_name           = "rg-mlz-hub-it-${run.setup.suffix}"
+        routing_supernet              = ["10.100.0.0/16"]
+        spoke_address_prefixes        = { app1 = "10.100.8.0/24" }
+        gateway_subnet_address_prefix = "10.100.1.0/27"
+        gateway_route_table_name      = "rt-vgw-mlz-hub-it-${run.setup.suffix}"
+        firewall = {
+          name                             = "afw-mlz-hub-it-${run.setup.suffix}"
+          sku_tier                         = "Basic"
+          subnet_address_prefix            = "10.100.0.0/26"
+          management_subnet_address_prefix = "10.100.0.64/26"
+          public_ip_name                   = "pip-afw-mlz-hub-it-${run.setup.suffix}"
+          management_public_ip_name        = "pip-afwm-mlz-hub-it-${run.setup.suffix}"
+          route_table_name                 = "rt-afw-mlz-hub-it-${run.setup.suffix}"
+          firewall_policy                  = { name = "afwp-mlz-hub-it-${run.setup.suffix}" }
+        }
+        nat_gateway = { name = "ng-mlz-hub-it-${run.setup.suffix}", public_ip_name = "pip-ng-mlz-hub-it-${run.setup.suffix}" }
+        dns_resolver = {
+          name                           = "dnspr-mlz-hub-it-${run.setup.suffix}"
+          inbound_endpoint_name          = "in-mlz-hub-it-${run.setup.suffix}"
+          outbound_endpoint_name         = "out-mlz-hub-it-${run.setup.suffix}"
+          inbound_subnet_address_prefix  = "10.100.1.64/28"
+          outbound_subnet_address_prefix = "10.100.1.80/28"
+        }
+        vpn_gateway = {
+          name            = "vgw-mlz-hub-it-${run.setup.suffix}"
+          public_ip_names = ["pip-vgw-mlz-hub-it-${run.setup.suffix}"]
+          local_network_gateways = {
+            office = { name = "lgw-mlz-hub-it-${run.setup.suffix}", gateway_ip_address = "203.0.113.10", address_prefixes = ["192.168.0.0/24"] }
+          }
+          connections = {
+            office = { name = "con-mlz-hub-it-${run.setup.suffix}", local_network_gateway_key = "office" }
+          }
+        }
+      }
     }
   }
 
   assert {
-    condition     = length(output.federated_identity_credential_resource_ids) == 3
-    error_message = "All three credentials should be created."
+    condition     = output.hub_virtual_networks.swedencentral.firewall_private_ip_address == "10.100.0.4" && output.connectivity.regions.swedencentral.firewall_private_ip == "10.100.0.4"
+    error_message = "The firewall should take its subnet's fifth address, got ${output.hub_virtual_networks.swedencentral.firewall_private_ip_address}."
   }
   assert {
-    condition     = can(regex("^[0-9a-f-]{36}$", output.principal_id)) && can(regex("^[0-9a-f-]{36}$", output.client_id))
-    error_message = "principal_id and client_id should be read back from Azure."
+    condition     = jsonencode(output.connectivity.regions.swedencentral.dns_servers) == jsonencode(["10.100.1.68"])
+    error_message = "With a Basic firewall (no DNS proxy), spokes should use the resolver's inbound address."
+  }
+  assert {
+    condition     = length(output.connectivity.private_dns_zone_ids) == 1 && output.connectivity.private_dns_zone_ids["privatelink.blob.core.windows.net"] != null
+    error_message = "The filtered private DNS zone should be created: ${jsonencode(output.connectivity.private_dns_zone_ids)}."
   }
 }
 
-run "update_identity" {
-  variables {
-    name      = "id-mlz-it-${run.setup.suffix}"
-    parent_id = run.setup.resource_group_id
-    location  = run.setup.location
-    federated_identity_credentials = {
-      one   = { issuer = "https://token.actions.githubusercontent.com", subject = "repo:example-org/example-repo:environment:one" }
-      two   = { issuer = "https://token.actions.githubusercontent.com", subject = "repo:example-org/example-repo:environment:two" }
-      three = { issuer = "https://token.actions.githubusercontent.com", subject = "repo:example-org/example-repo:environment:three" }
-    }
-    lock = { kind = "CanNotDelete" }
-    role_assignments = {
-      reader = { role_definition_id_or_name = "Reader", principal_id = run.setup.object_id }
-    }
-    isolation_scope = "Regional"
-    tags            = { updated = "true" } # a PUT of the identity without its credentials
-  }
-
-  assert {
-    condition     = azapi_resource.this.tags == tomap({ updated = "true" })
-    error_message = "The identity should be updated in place."
-  }
-}
-
-run "credentials_survive" {
+run "read_after_create" {
   module {
     source = "./tests/integration/read"
   }
 
   variables {
-    credential_ids = run.update_identity.federated_identity_credential_resource_ids
-  }
-
-  assert {
-    condition     = output.subjects.two == "repo:example-org/example-repo:environment:two" && length(output.subjects) == 3
-    error_message = "The credentials should still exist after the identity was updated."
-  }
-}
-
-run "isolation_scope_set_in_azure" {
-  module {
-    source = "./tests/integration/read_identity"
-  }
-
-  variables {
-    identity_id = run.update_identity.resource_id
-  }
-
-  assert {
-    condition     = output.isolation_scope == "Regional"
-    error_message = "Azure should report the Regional isolation scope set by update_identity."
-  }
-}
-
-run "remove_credential_under_lock" {
-  # A credential is deleted while the lock stays configured: the lock is removed and created again
-  # around the change. The scope goes back to Azure's default, which must reach Azure.
-  variables {
-    name      = "id-mlz-it-${run.setup.suffix}"
-    parent_id = run.setup.resource_group_id
-    location  = run.setup.location
-    federated_identity_credentials = {
-      one = { issuer = "https://token.actions.githubusercontent.com", subject = "repo:example-org/example-repo:environment:one" }
-      two = { issuer = "https://token.actions.githubusercontent.com", subject = "repo:example-org/example-repo:environment:two" }
-    }
-    lock = { kind = "CanNotDelete" }
-    role_assignments = {
-      reader = { role_definition_id_or_name = "Reader", principal_id = run.setup.object_id }
+    resource_ids = {
+      firewall_route_table = "Microsoft.Network/routeTables@2024-05-01|${run.create.hub_virtual_networks.swedencentral.firewall_route_table_resource_id}"
+      gateway_route_table  = "Microsoft.Network/routeTables@2024-05-01|${run.create.hub_virtual_networks.swedencentral.gateway_route_table_resource_id}"
+      firewall_subnet      = "Microsoft.Network/virtualNetworks/subnets@2024-07-01|${run.create.hub_virtual_networks.swedencentral.subnet_resource_ids.firewall}"
+      gateway_subnet       = "Microsoft.Network/virtualNetworks/subnets@2024-07-01|${run.create.hub_virtual_networks.swedencentral.subnet_resource_ids.gateway}"
+      firewall             = "Microsoft.Network/azureFirewalls@2025-07-01|${run.create.hub_virtual_networks.swedencentral.firewall_resource_id}"
+      connection           = "Microsoft.Network/connections@2025-07-01|${run.create.hub_virtual_networks.swedencentral.vpn_gateway_connection_resource_ids.office}"
+      private_dns_link     = "Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01|${run.create.connectivity.private_dns_zone_ids["privatelink.blob.core.windows.net"]}/virtualNetworkLinks/vnet_link-azure_storage_blob-swedencentral"
     }
   }
 
   assert {
-    condition     = keys(output.federated_identity_credential_resource_ids) == ["one", "two"] && module.interfaces.lock_resource_id != null
-    error_message = "The third credential should be gone and the lock back."
+    condition     = jsonencode({ for route in output.properties.firewall_route_table.routes : route.name => [route.properties.addressPrefix, route.properties.nextHopType] }) == jsonencode({ default = ["0.0.0.0/0", "Internet"] }) && output.properties.firewall_route_table.disableBgpRoutePropagation == false
+    error_message = "The firewall subnet should route 0.0.0.0/0 to the Internet, with gateway route propagation on: ${jsonencode(output.properties.firewall_route_table)}."
+  }
+  assert {
+    condition     = jsonencode({ for route in output.properties.gateway_route_table.routes : route.name => [route.properties.addressPrefix, route.properties.nextHopType, try(route.properties.nextHopIpAddress, null)] }) == jsonencode({ spoke-app1 = ["10.100.8.0/24", "VirtualAppliance", "10.100.0.4"] }) && output.properties.gateway_route_table.disableBgpRoutePropagation == false
+    error_message = "GatewaySubnet should route the spoke to the firewall, with gateway route propagation on: ${jsonencode(output.properties.gateway_route_table)}."
+  }
+  assert {
+    condition     = lower(output.properties.firewall_subnet.routeTable.id) == lower(run.create.hub_virtual_networks.swedencentral.firewall_route_table_resource_id) && lower(output.properties.firewall_subnet.natGateway.id) == lower(run.create.hub_virtual_networks.swedencentral.nat_gateway_resource_id)
+    error_message = "AzureFirewallSubnet should have its route table and the NAT gateway."
+  }
+  assert {
+    condition     = lower(output.properties.gateway_subnet.routeTable.id) == lower(run.create.hub_virtual_networks.swedencentral.gateway_route_table_resource_id)
+    error_message = "GatewaySubnet should have its route table."
+  }
+  assert {
+    condition     = output.properties.firewall.sku.tier == "Basic" && output.properties.firewall.ipConfigurations[0].properties.privateIPAddress == "10.100.0.4" && output.properties.firewall.managementIpConfiguration != null
+    error_message = "The firewall should be a Basic firewall at 10.100.0.4 with its management NIC."
+  }
+  assert {
+    condition     = output.properties.connection.connectionType == "IPsec"
+    error_message = "The site-to-site connection should exist."
+  }
+  assert {
+    condition     = lower(output.properties.private_dns_link.virtualNetwork.id) == lower(run.create.hub_virtual_networks.swedencentral.resource_id)
+    error_message = "The private DNS zone should be linked to the hub."
   }
 }
 
-run "isolation_scope_reset_in_azure" {
-  module {
-    source = "./tests/integration/read_identity"
-  }
-
+# Tags update both route tables (a PUT without their routes) while app1's route stays as it is; a second
+# spoke is added; forced tunnelling through an appliance; custom DNS servers on the hub.
+run "update" {
   variables {
-    identity_id = run.remove_credential_under_lock.resource_id
+    parent_id          = run.setup.parent_id
+    tags               = { test = "update" }
+    connection_secrets = { "swedencentral/office" = "it-${run.setup.suffix}-shared-key" }
+    private_dns_zones  = { resource_group_name = "rg-mlz-hub-it-pdns-${run.setup.suffix}", zone_name_filter = "^privatelink\\.blob\\.core\\." }
+    hub_virtual_networks = {
+      swedencentral = {
+        location                      = run.setup.location
+        address_space                 = ["10.100.0.0/22"]
+        is_primary                    = true
+        name                          = "vnet-mlz-hub-it-${run.setup.suffix}"
+        resource_group_name           = "rg-mlz-hub-it-${run.setup.suffix}"
+        routing_supernet              = ["10.100.0.0/16"]
+        spoke_address_prefixes        = { app1 = "10.100.8.0/24", app2 = "10.100.9.0/24" }
+        virtual_network_dns_servers   = ["10.100.1.68"]
+        gateway_subnet_address_prefix = "10.100.1.0/27"
+        gateway_route_table_name      = "rt-vgw-mlz-hub-it-${run.setup.suffix}"
+        firewall = {
+          name                             = "afw-mlz-hub-it-${run.setup.suffix}"
+          sku_tier                         = "Basic"
+          subnet_address_prefix            = "10.100.0.0/26"
+          management_subnet_address_prefix = "10.100.0.64/26"
+          public_ip_name                   = "pip-afw-mlz-hub-it-${run.setup.suffix}"
+          management_public_ip_name        = "pip-afwm-mlz-hub-it-${run.setup.suffix}"
+          route_table_name                 = "rt-afw-mlz-hub-it-${run.setup.suffix}"
+          default_route                    = { next_hop_type = "VirtualAppliance", next_hop_ip_address = "10.100.2.4" }
+          firewall_policy                  = { name = "afwp-mlz-hub-it-${run.setup.suffix}" }
+        }
+        nat_gateway = { name = "ng-mlz-hub-it-${run.setup.suffix}", public_ip_name = "pip-ng-mlz-hub-it-${run.setup.suffix}" }
+        dns_resolver = {
+          name                           = "dnspr-mlz-hub-it-${run.setup.suffix}"
+          inbound_endpoint_name          = "in-mlz-hub-it-${run.setup.suffix}"
+          outbound_endpoint_name         = "out-mlz-hub-it-${run.setup.suffix}"
+          inbound_subnet_address_prefix  = "10.100.1.64/28"
+          outbound_subnet_address_prefix = "10.100.1.80/28"
+        }
+        vpn_gateway = {
+          name            = "vgw-mlz-hub-it-${run.setup.suffix}"
+          public_ip_names = ["pip-vgw-mlz-hub-it-${run.setup.suffix}"]
+          local_network_gateways = {
+            office = { name = "lgw-mlz-hub-it-${run.setup.suffix}", gateway_ip_address = "203.0.113.10", address_prefixes = ["192.168.0.0/24"] }
+          }
+          connections = {
+            office = { name = "con-mlz-hub-it-${run.setup.suffix}", local_network_gateway_key = "office" }
+          }
+        }
+      }
+    }
   }
 
   assert {
-    condition     = output.isolation_scope == "None"
-    error_message = "Azure should report the default isolation scope again once isolation_scope is no longer set."
+    condition     = output.hub_virtual_networks.swedencentral.firewall_resource_id == run.create.hub_virtual_networks.swedencentral.firewall_resource_id && output.hub_virtual_networks.swedencentral.vpn_gateway_resource_id == run.create.hub_virtual_networks.swedencentral.vpn_gateway_resource_id
+    error_message = "The firewall and the gateway should be kept."
   }
 }
 
-run "readonly_lock" {
-  variables {
-    name      = "id-mlz-it-${run.setup.suffix}"
-    parent_id = run.setup.resource_group_id
-    location  = run.setup.location
-    federated_identity_credentials = {
-      one = { issuer = "https://token.actions.githubusercontent.com", subject = "repo:example-org/example-repo:environment:one" }
-      two = { issuer = "https://token.actions.githubusercontent.com", subject = "repo:example-org/example-repo:environment:two" }
-    }
-    lock = { kind = "ReadOnly" }
-    role_assignments = {
-      reader = { role_definition_id_or_name = "Reader", principal_id = run.setup.object_id }
-    }
-  }
-}
-
-run "update_credential_under_readonly_lock" {
-  # A credential updated in place keeps its ID, and a ReadOnly lock blocks the write: the credential's
-  # lock_dependency changes with its body, so the lock is removed and created again around it.
-  variables {
-    name      = "id-mlz-it-${run.setup.suffix}"
-    parent_id = run.setup.resource_group_id
-    location  = run.setup.location
-    federated_identity_credentials = {
-      one = { issuer = "https://token.actions.githubusercontent.com", subject = "repo:example-org/example-repo:environment:one" }
-      two = { issuer = "https://token.actions.githubusercontent.com", subject = "repo:example-org/example-repo:environment:two-updated" }
-    }
-    lock = { kind = "ReadOnly" }
-    role_assignments = {
-      reader = { role_definition_id_or_name = "Reader", principal_id = run.setup.object_id }
-    }
-  }
-
-  assert {
-    condition     = output.federated_identity_credential_resource_ids["two"] == run.readonly_lock.federated_identity_credential_resource_ids["two"] && module.interfaces.lock_resource_id != null
-    error_message = "The credential should be updated in place and the lock back."
-  }
-}
-
-run "credential_updated_in_azure" {
+run "read_after_update" {
   module {
     source = "./tests/integration/read"
   }
 
   variables {
-    credential_ids = run.update_credential_under_readonly_lock.federated_identity_credential_resource_ids
+    resource_ids = {
+      firewall_route_table = "Microsoft.Network/routeTables@2024-05-01|${run.create.hub_virtual_networks.swedencentral.firewall_route_table_resource_id}"
+      gateway_route_table  = "Microsoft.Network/routeTables@2024-05-01|${run.create.hub_virtual_networks.swedencentral.gateway_route_table_resource_id}"
+      firewall_subnet      = "Microsoft.Network/virtualNetworks/subnets@2024-07-01|${run.create.hub_virtual_networks.swedencentral.subnet_resource_ids.firewall}"
+      hub                  = "Microsoft.Network/virtualNetworks@2024-07-01|${run.create.hub_virtual_networks.swedencentral.resource_id}"
+    }
   }
 
   assert {
-    condition     = output.subjects["two"] == "repo:example-org/example-repo:environment:two-updated"
-    error_message = "Azure should report the updated subject."
+    condition     = jsonencode({ for route in output.properties.gateway_route_table.routes : route.name => route.properties.addressPrefix }) == jsonencode({ spoke-app1 = "10.100.8.0/24", spoke-app2 = "10.100.9.0/24" }) && output.tags.gateway_route_table.test == "update"
+    error_message = "The route table update should keep the first spoke's route and add the second: ${jsonencode(output.properties.gateway_route_table.routes)}."
+  }
+  assert {
+    condition     = jsonencode({ for route in output.properties.firewall_route_table.routes : route.name => [route.properties.addressPrefix, route.properties.nextHopType, try(route.properties.nextHopIpAddress, null)] }) == jsonencode({ default = ["0.0.0.0/0", "VirtualAppliance", "10.100.2.4"] }) && output.tags.firewall_route_table.test == "update"
+    error_message = "The firewall subnet's default route should go to the appliance: ${jsonencode(output.properties.firewall_route_table.routes)}."
+  }
+  assert {
+    condition     = jsonencode(output.properties.hub.dhcpOptions.dnsServers) == jsonencode(["10.100.1.68"])
+    error_message = "The hub should use the custom DNS servers."
+  }
+  assert {
+    condition     = lower(output.properties.firewall_subnet.routeTable.id) == lower(run.create.hub_virtual_networks.swedencentral.firewall_route_table_resource_id) && lower(output.properties.firewall_subnet.natGateway.id) == lower(run.create.hub_virtual_networks.swedencentral.nat_gateway_resource_id)
+    error_message = "The virtual network's update should keep the firewall subnet's associations."
   }
 }
 
-run "replace_locked_identity" {
-  # A new name replaces the identity. The lock goes first and the pause is replaced with the identity,
-  # so the old identity is deleted only after the lock deletion has propagated.
+# The first spoke's route removed, the default route back to the Internet, the custom DNS servers removed.
+run "revert" {
   variables {
-    name      = "id-mlz-it-${run.setup.suffix}-renamed"
-    parent_id = run.setup.resource_group_id
-    location  = run.setup.location
-    federated_identity_credentials = {
-      one = { issuer = "https://token.actions.githubusercontent.com", subject = "repo:example-org/example-repo:environment:one" }
+    parent_id          = run.setup.parent_id
+    tags               = { test = "update" }
+    connection_secrets = { "swedencentral/office" = "it-${run.setup.suffix}-shared-key" }
+    private_dns_zones  = { resource_group_name = "rg-mlz-hub-it-pdns-${run.setup.suffix}", zone_name_filter = "^privatelink\\.blob\\.core\\." }
+    hub_virtual_networks = {
+      swedencentral = {
+        location                      = run.setup.location
+        address_space                 = ["10.100.0.0/22"]
+        is_primary                    = true
+        name                          = "vnet-mlz-hub-it-${run.setup.suffix}"
+        resource_group_name           = "rg-mlz-hub-it-${run.setup.suffix}"
+        routing_supernet              = ["10.100.0.0/16"]
+        spoke_address_prefixes        = { app2 = "10.100.9.0/24" }
+        gateway_subnet_address_prefix = "10.100.1.0/27"
+        gateway_route_table_name      = "rt-vgw-mlz-hub-it-${run.setup.suffix}"
+        firewall = {
+          name                             = "afw-mlz-hub-it-${run.setup.suffix}"
+          sku_tier                         = "Basic"
+          subnet_address_prefix            = "10.100.0.0/26"
+          management_subnet_address_prefix = "10.100.0.64/26"
+          public_ip_name                   = "pip-afw-mlz-hub-it-${run.setup.suffix}"
+          management_public_ip_name        = "pip-afwm-mlz-hub-it-${run.setup.suffix}"
+          route_table_name                 = "rt-afw-mlz-hub-it-${run.setup.suffix}"
+          firewall_policy                  = { name = "afwp-mlz-hub-it-${run.setup.suffix}" }
+        }
+        nat_gateway = { name = "ng-mlz-hub-it-${run.setup.suffix}", public_ip_name = "pip-ng-mlz-hub-it-${run.setup.suffix}" }
+        dns_resolver = {
+          name                           = "dnspr-mlz-hub-it-${run.setup.suffix}"
+          inbound_endpoint_name          = "in-mlz-hub-it-${run.setup.suffix}"
+          outbound_endpoint_name         = "out-mlz-hub-it-${run.setup.suffix}"
+          inbound_subnet_address_prefix  = "10.100.1.64/28"
+          outbound_subnet_address_prefix = "10.100.1.80/28"
+        }
+        vpn_gateway = {
+          name            = "vgw-mlz-hub-it-${run.setup.suffix}"
+          public_ip_names = ["pip-vgw-mlz-hub-it-${run.setup.suffix}"]
+          local_network_gateways = {
+            office = { name = "lgw-mlz-hub-it-${run.setup.suffix}", gateway_ip_address = "203.0.113.10", address_prefixes = ["192.168.0.0/24"] }
+          }
+          connections = {
+            office = { name = "con-mlz-hub-it-${run.setup.suffix}", local_network_gateway_key = "office" }
+          }
+        }
+      }
     }
-    lock = { kind = "CanNotDelete" }
+  }
+}
+
+run "read_after_revert" {
+  module {
+    source = "./tests/integration/read"
+  }
+
+  variables {
+    resource_ids = {
+      firewall_route_table = "Microsoft.Network/routeTables@2024-05-01|${run.create.hub_virtual_networks.swedencentral.firewall_route_table_resource_id}"
+      gateway_route_table  = "Microsoft.Network/routeTables@2024-05-01|${run.create.hub_virtual_networks.swedencentral.gateway_route_table_resource_id}"
+      hub                  = "Microsoft.Network/virtualNetworks@2024-07-01|${run.create.hub_virtual_networks.swedencentral.resource_id}"
+    }
   }
 
   assert {
-    condition     = output.name == "id-mlz-it-${run.setup.suffix}-renamed" && startswith(module.interfaces.lock_resource_id, "${output.resource_id}/providers/Microsoft.Authorization/locks/")
-    error_message = "The identity should be replaced and locked again."
+    condition     = jsonencode({ for route in output.properties.gateway_route_table.routes : route.name => route.properties.addressPrefix }) == jsonencode({ spoke-app2 = "10.100.9.0/24" })
+    error_message = "The removed spoke's route should be gone: ${jsonencode(output.properties.gateway_route_table.routes)}."
+  }
+  assert {
+    condition     = jsonencode({ for route in output.properties.firewall_route_table.routes : route.name => [route.properties.addressPrefix, route.properties.nextHopType] }) == jsonencode({ default = ["0.0.0.0/0", "Internet"] })
+    error_message = "The default route should be back to the Internet: ${jsonencode(output.properties.firewall_route_table.routes)}."
+  }
+  assert {
+    condition     = length(try(output.properties.hub.dhcpOptions.dnsServers, [])) == 0
+    error_message = "Removing the custom DNS servers should reach Azure: ${jsonencode(try(output.properties.hub.dhcpOptions, null))}."
+  }
+}
+
+# The firewall's address and the gateway's BGP settings come from the resources' `output`, which azapi
+# makes unknown in any plan that changes their body: equal values mean neither plans a change.
+run "second_plan_is_clean" {
+  command = plan
+
+  variables {
+    parent_id          = run.setup.parent_id
+    tags               = { test = "update" }
+    connection_secrets = { "swedencentral/office" = "it-${run.setup.suffix}-shared-key" }
+    private_dns_zones  = { resource_group_name = "rg-mlz-hub-it-pdns-${run.setup.suffix}", zone_name_filter = "^privatelink\\.blob\\.core\\." }
+    hub_virtual_networks = {
+      swedencentral = {
+        location                      = run.setup.location
+        address_space                 = ["10.100.0.0/22"]
+        is_primary                    = true
+        name                          = "vnet-mlz-hub-it-${run.setup.suffix}"
+        resource_group_name           = "rg-mlz-hub-it-${run.setup.suffix}"
+        routing_supernet              = ["10.100.0.0/16"]
+        spoke_address_prefixes        = { app2 = "10.100.9.0/24" }
+        gateway_subnet_address_prefix = "10.100.1.0/27"
+        gateway_route_table_name      = "rt-vgw-mlz-hub-it-${run.setup.suffix}"
+        firewall = {
+          name                             = "afw-mlz-hub-it-${run.setup.suffix}"
+          sku_tier                         = "Basic"
+          subnet_address_prefix            = "10.100.0.0/26"
+          management_subnet_address_prefix = "10.100.0.64/26"
+          public_ip_name                   = "pip-afw-mlz-hub-it-${run.setup.suffix}"
+          management_public_ip_name        = "pip-afwm-mlz-hub-it-${run.setup.suffix}"
+          route_table_name                 = "rt-afw-mlz-hub-it-${run.setup.suffix}"
+          firewall_policy                  = { name = "afwp-mlz-hub-it-${run.setup.suffix}" }
+        }
+        nat_gateway = { name = "ng-mlz-hub-it-${run.setup.suffix}", public_ip_name = "pip-ng-mlz-hub-it-${run.setup.suffix}" }
+        dns_resolver = {
+          name                           = "dnspr-mlz-hub-it-${run.setup.suffix}"
+          inbound_endpoint_name          = "in-mlz-hub-it-${run.setup.suffix}"
+          outbound_endpoint_name         = "out-mlz-hub-it-${run.setup.suffix}"
+          inbound_subnet_address_prefix  = "10.100.1.64/28"
+          outbound_subnet_address_prefix = "10.100.1.80/28"
+        }
+        vpn_gateway = {
+          name            = "vgw-mlz-hub-it-${run.setup.suffix}"
+          public_ip_names = ["pip-vgw-mlz-hub-it-${run.setup.suffix}"]
+          local_network_gateways = {
+            office = { name = "lgw-mlz-hub-it-${run.setup.suffix}", gateway_ip_address = "203.0.113.10", address_prefixes = ["192.168.0.0/24"] }
+          }
+          connections = {
+            office = { name = "con-mlz-hub-it-${run.setup.suffix}", local_network_gateway_key = "office" }
+          }
+        }
+      }
+    }
+  }
+
+  assert {
+    condition     = output.hub_virtual_networks.swedencentral.firewall_private_ip_address == run.revert.hub_virtual_networks.swedencentral.firewall_private_ip_address && jsonencode(output.hub_virtual_networks.swedencentral.vpn_gateway_bgp_settings) == jsonencode(run.revert.hub_virtual_networks.swedencentral.vpn_gateway_bgp_settings)
+    error_message = "The firewall and the gateway should plan no change after the last apply."
   }
 }
