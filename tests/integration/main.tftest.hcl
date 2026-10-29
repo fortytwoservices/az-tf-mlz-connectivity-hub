@@ -1,7 +1,8 @@
 # Real Azure, no mocks: ARM_SUBSCRIPTION_ID=<test subscription> scripts/integration.sh .
-# One hub with a Basic firewall (the cheapest tier) and its management NIC, a StandardV2 NAT gateway, a
-# resolver, a VpnGw1AZ gateway with a site and a connection, and one private DNS zone; about an hour and
-# a half, billed by the hour while it exists, destroyed at the end. Proves what mocks cannot: the building
+# One hub (the user's decision, 2026-10-29: the mesh between hubs is unit-tested only) with a Basic
+# firewall (the cheapest tier) and its management NIC, a StandardV2 NAT gateway, a Basic Bastion, a
+# resolver, a VpnGw1AZ gateway with a site and a connection, and one private DNS zone; about an hour and a
+# half, billed by the hour while it exists, destroyed at the end. Proves what mocks cannot: the building
 # blocks fit together in Azure; the routes and subnet associations land; a route table update keeps its
 # routes; spoke routes are added and removed; forced tunnelling is switched on and off; custom DNS servers
 # are set and removed; the firewall takes its subnet's fifth address; the last plan is clean.
@@ -39,6 +40,7 @@ run "create" {
           firewall_policy                  = { name = "afwp-mlz-hub-it-${run.setup.suffix}" }
         }
         nat_gateway = { name = "ng-mlz-hub-it-${run.setup.suffix}", public_ip_name = "pip-ng-mlz-hub-it-${run.setup.suffix}" }
+        bastion     = { name = "bas-mlz-hub-it-${run.setup.suffix}", sku = "Basic", subnet_address_prefix = "10.100.0.128/26", public_ip_name = "pip-bas-mlz-hub-it-${run.setup.suffix}" }
         dns_resolver = {
           name                           = "dnspr-mlz-hub-it-${run.setup.suffix}"
           inbound_endpoint_name          = "in-mlz-hub-it-${run.setup.suffix}"
@@ -87,6 +89,7 @@ run "read_after_create" {
       gateway_subnet       = "Microsoft.Network/virtualNetworks/subnets@2024-07-01|${run.create.hub_virtual_networks.swedencentral.subnet_resource_ids.gateway}"
       firewall             = "Microsoft.Network/azureFirewalls@2025-07-01|${run.create.hub_virtual_networks.swedencentral.firewall_resource_id}"
       connection           = "Microsoft.Network/connections@2025-07-01|${run.create.hub_virtual_networks.swedencentral.vpn_gateway_connection_resource_ids.office}"
+      bastion              = "Microsoft.Network/bastionHosts@2025-07-01|${run.create.hub_virtual_networks.swedencentral.bastion_resource_id}"
       private_dns_link     = "Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01|${run.create.connectivity.private_dns_zone_ids["privatelink.blob.core.windows.net"]}/virtualNetworkLinks/vnet_link-azure_storage_blob-swedencentral"
     }
   }
@@ -114,6 +117,10 @@ run "read_after_create" {
   assert {
     condition     = output.properties.connection.connectionType == "IPsec"
     error_message = "The site-to-site connection should exist."
+  }
+  assert {
+    condition     = lower(output.properties.bastion.ipConfigurations[0].properties.subnet.id) == lower(run.create.hub_virtual_networks.swedencentral.subnet_resource_ids.bastion)
+    error_message = "Bastion should be in the hub's AzureBastionSubnet."
   }
   assert {
     condition     = lower(output.properties.private_dns_link.virtualNetwork.id) == lower(run.create.hub_virtual_networks.swedencentral.resource_id)
@@ -153,6 +160,7 @@ run "update" {
           firewall_policy                  = { name = "afwp-mlz-hub-it-${run.setup.suffix}" }
         }
         nat_gateway = { name = "ng-mlz-hub-it-${run.setup.suffix}", public_ip_name = "pip-ng-mlz-hub-it-${run.setup.suffix}" }
+        bastion     = { name = "bas-mlz-hub-it-${run.setup.suffix}", sku = "Basic", subnet_address_prefix = "10.100.0.128/26", public_ip_name = "pip-bas-mlz-hub-it-${run.setup.suffix}" }
         dns_resolver = {
           name                           = "dnspr-mlz-hub-it-${run.setup.suffix}"
           inbound_endpoint_name          = "in-mlz-hub-it-${run.setup.suffix}"
@@ -241,6 +249,7 @@ run "revert" {
           firewall_policy                  = { name = "afwp-mlz-hub-it-${run.setup.suffix}" }
         }
         nat_gateway = { name = "ng-mlz-hub-it-${run.setup.suffix}", public_ip_name = "pip-ng-mlz-hub-it-${run.setup.suffix}" }
+        bastion     = { name = "bas-mlz-hub-it-${run.setup.suffix}", sku = "Basic", subnet_address_prefix = "10.100.0.128/26", public_ip_name = "pip-bas-mlz-hub-it-${run.setup.suffix}" }
         dns_resolver = {
           name                           = "dnspr-mlz-hub-it-${run.setup.suffix}"
           inbound_endpoint_name          = "in-mlz-hub-it-${run.setup.suffix}"
@@ -322,6 +331,7 @@ run "second_plan_is_clean" {
           firewall_policy                  = { name = "afwp-mlz-hub-it-${run.setup.suffix}" }
         }
         nat_gateway = { name = "ng-mlz-hub-it-${run.setup.suffix}", public_ip_name = "pip-ng-mlz-hub-it-${run.setup.suffix}" }
+        bastion     = { name = "bas-mlz-hub-it-${run.setup.suffix}", sku = "Basic", subnet_address_prefix = "10.100.0.128/26", public_ip_name = "pip-bas-mlz-hub-it-${run.setup.suffix}" }
         dns_resolver = {
           name                           = "dnspr-mlz-hub-it-${run.setup.suffix}"
           inbound_endpoint_name          = "in-mlz-hub-it-${run.setup.suffix}"
