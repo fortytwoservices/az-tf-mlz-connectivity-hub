@@ -459,6 +459,7 @@ object({
         network_connections            = optional(list(string), [])
         authorization_locks            = optional(list(string), [])
         authorization_role_assignments = optional(list(string), [])
+        insights_diagnostic_settings   = optional(list(string), [])
       }), {})
     }), {})
   })
@@ -636,6 +637,7 @@ object({
         network_connections            = optional(string)
         authorization_locks            = optional(string)
         authorization_role_assignments = optional(string)
+        insights_diagnostic_settings   = optional(string)
       }), {})
     }), {})
   })
@@ -747,7 +749,7 @@ Version: v0.1.0
 
 Source: git::https://github.com/fortytwoservices/az-tf-mlz-virtual-network-gateway.git
 
-Version: d011de106d63c703251e58309d1aa32d54ba1d41
+Version: v0.1.0
 
 ### <a name="module_firewall"></a> [firewall](#module\_firewall)
 
@@ -807,7 +809,7 @@ Version: 0.13.0
 
 Source: git::https://github.com/fortytwoservices/az-tf-mlz-virtual-network-gateway.git
 
-Version: d011de106d63c703251e58309d1aa32d54ba1d41
+Version: v0.1.0
 
 ## Development
 

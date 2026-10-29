@@ -1,5 +1,5 @@
 module "vpn_gateway" {
-  source   = "git::https://github.com/fortytwoservices/az-tf-mlz-virtual-network-gateway.git?ref=d011de106d63c703251e58309d1aa32d54ba1d41"
+  source   = "git::https://github.com/fortytwoservices/az-tf-mlz-virtual-network-gateway.git?ref=v0.1.0"
   for_each = local.vpn_gateways
 
   name           = local.names[each.key].vpn_gateway
@@ -31,7 +31,7 @@ module "vpn_gateway" {
 
 # Azure assigns and manages an ExpressRoute gateway's public IP address.
 module "express_route_gateway" {
-  source   = "git::https://github.com/fortytwoservices/az-tf-mlz-virtual-network-gateway.git?ref=d011de106d63c703251e58309d1aa32d54ba1d41"
+  source   = "git::https://github.com/fortytwoservices/az-tf-mlz-virtual-network-gateway.git?ref=v0.1.0"
   for_each = local.express_route_gateways
 
   name                      = local.names[each.key].express_route_gateway
