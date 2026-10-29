@@ -27,6 +27,9 @@ module "vpn_gateway" {
   ignore_body_changes    = var.ignore_body_changes.network_virtual_network_gateways
   retry                  = var.retry
   timeouts               = var.timeouts
+
+  # After the firewall, as Bastion (main.bastions.tf).
+  depends_on = [module.firewall]
 }
 
 # Azure assigns and manages an ExpressRoute gateway's public IP address.
@@ -49,4 +52,7 @@ module "express_route_gateway" {
   ignore_body_changes       = var.ignore_body_changes.network_virtual_network_gateways
   retry                     = var.retry
   timeouts                  = var.timeouts
+
+  # After the firewall, as Bastion (main.bastions.tf).
+  depends_on = [module.firewall]
 }

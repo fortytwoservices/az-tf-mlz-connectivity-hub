@@ -24,4 +24,9 @@ module "bastion" {
   ignore_body_changes = var.ignore_body_changes.network_bastion_hosts
   retry               = var.retry
   timeouts            = var.timeouts
+
+  # After the firewall: created at the same time in one virtual network, Azure failed the firewall twice
+  # out of two (InternalServerError; sandbox, 2026-10-29). The module reads nothing from Azure while it
+  # has no role assignments, so this only orders the writes; revisit if role assignments come in.
+  depends_on = [module.firewall]
 }
