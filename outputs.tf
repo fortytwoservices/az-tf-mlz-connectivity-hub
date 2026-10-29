@@ -61,7 +61,7 @@ DESCRIPTION
       firewall_private_ip_address                    = try(module.firewall[key].private_ip_address, null)
       firewall_public_ip_addresses                   = try(module.firewall[key].public_ip_addresses, null)
       firewall_policy_resource_id                    = try(module.firewall[key].firewall_policy_resource_id, null)
-      firewall_route_table_resource_id               = try(module.firewall_route_table[key].resource_id, null)
+      firewall_route_table_resource_id               = try(azapi_resource.route_table["${key}/firewall"].id, null)
       nat_gateway_resource_id                        = try(module.nat_gateway[key].resource_id, null)
       nat_gateway_public_ip_addresses                = try(module.nat_gateway[key].public_ip_addresses, null)
       bastion_resource_id                            = try(module.bastion[key].resource_id, null)
@@ -75,7 +75,7 @@ DESCRIPTION
       vpn_gateway_local_network_gateway_resource_ids = try(module.vpn_gateway[key].local_network_gateway_resource_ids, null)
       express_route_gateway_resource_id              = try(module.express_route_gateway[key].resource_id, null)
       express_route_gateway_connection_resource_ids  = try(module.express_route_gateway[key].connection_resource_ids, null)
-      gateway_route_table_resource_id                = try(module.gateway_route_table[key].resource_id, null)
+      gateway_route_table_resource_id                = try(azapi_resource.route_table["${key}/gateway"].id, null)
     }
   }
 }

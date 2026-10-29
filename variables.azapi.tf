@@ -1,6 +1,7 @@
 variable "ignore_body_changes" {
   type = object({
     resources_resource_groups = optional(list(string), [])
+    network_route_tables      = optional(list(string), [])
 
     network_virtual_networks = optional(object({
       virtual_networks = optional(list(string), [])
@@ -112,6 +113,7 @@ Paths in each resource's `body` whose changes the AzAPI provider ignores. Prefer
 Paths use dot notation, for example `properties.dhcpOptions`. Individual list items cannot be targeted; ignore the whole list property instead. Configuration changes at an ignored path are **not** sent to Azure until that path is removed from the list. Changes take effect only after an apply, because the value is held in provider-private state.
 
 - `resources_resource_groups` - Ignored body paths for the resource groups.
+- `network_route_tables` - Ignored body paths for the route tables (their routes are `properties.routes`).
 - `network_virtual_networks` - Slot for the hub virtual networks, `Azure/avm-res-network-virtualnetwork/azurerm`'s `ignore_body_changes`; the hub peerings use its `virtual_networks_virtual_network_peerings` slot.
 - `network_azure_firewalls` - Slot for `az-tf-mlz-azure-firewall`, shaped like its `ignore_body_changes`.
 - `network_nat_gateways` - Slot for `az-tf-mlz-nat-gateway`, shaped like its `ignore_body_changes`.
@@ -119,7 +121,7 @@ Paths use dot notation, for example `properties.dhcpOptions`. Individual list it
 - `network_dns_resolvers` - Slot for `az-tf-mlz-dns-resolver`, shaped like its `ignore_body_changes` (without the rulesets, which this module does not create).
 - `network_virtual_network_gateways` - Slot for `az-tf-mlz-virtual-network-gateway` (the VPN and the ExpressRoute gateways), shaped like its `ignore_body_changes`.
 
-The route tables (`Azure/avm-ptn-alz-sub-vending/azure//modules/route-table`) and the private DNS zones (`Azure/avm-ptn-network-private-link-private-dns-zones/azurerm`) take no ignored paths.
+The private DNS zones (`Azure/avm-ptn-network-private-link-private-dns-zones/azurerm`) take no ignored paths.
 DESCRIPTION
   nullable    = false
 }
@@ -127,11 +129,8 @@ DESCRIPTION
 variable "resource_types" {
   type = object({
     resources_resource_groups = optional(string, "Microsoft.Resources/resourceGroups@2025-04-01")
+    network_route_tables      = optional(string, "Microsoft.Network/routeTables@2025-07-01")
 
-    network_route_tables = optional(object({
-      this  = optional(string)
-      route = optional(string)
-    }), {})
     network_azure_firewalls = optional(object({
       network_azure_firewalls        = optional(string)
       authorization_locks            = optional(string)
@@ -231,7 +230,7 @@ variable "resource_types" {
 Override the AzAPI `<provider>/<resource>@<api-version>` strings used by this module and the modules it calls. Each key defaults to a tested value; supply only the keys you want to override.
 
 - `resources_resource_groups` - The resource groups.
-- `network_route_tables` - Slot for `Azure/avm-ptn-alz-sub-vending/azure//modules/route-table`: `this` (the route tables) and `route` (their routes). Defaults live in that module.
+- `network_route_tables` - The route tables of `AzureFirewallSubnet` and `GatewaySubnet`, with their routes.
 - `network_azure_firewalls` - Slot for `az-tf-mlz-azure-firewall`, shaped like its `resource_types`. Defaults live in that module.
 - `network_nat_gateways` - Slot for `az-tf-mlz-nat-gateway`, shaped like its `resource_types`. Defaults live in that module.
 - `network_bastion_hosts` - Slot for `az-tf-mlz-bastion`, shaped like its `resource_types`. Defaults live in that module.

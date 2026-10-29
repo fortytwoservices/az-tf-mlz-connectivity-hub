@@ -12,7 +12,7 @@ blocks are MLZ modules and AVM's AzAPI modules.
 |---|---|
 | One resource group per hub (and one for the private DNS zones) | this module |
 | Hub virtual networks, their subnets and the peerings between hubs | `Azure/avm-res-network-virtualnetwork/azurerm` 0.22.3 (AzAPI) |
-| Route tables of `AzureFirewallSubnet` and `GatewaySubnet`, with their routes | `Azure/avm-ptn-alz-sub-vending/azure//modules/route-table` 0.3.4 (AzAPI) |
+| Route tables of `AzureFirewallSubnet` and `GatewaySubnet`, their routes in the table's body | this module |
 | Firewall and policy, with their public IP addresses | [`az-tf-mlz-azure-firewall`](https://github.com/fortytwoservices/az-tf-mlz-azure-firewall) |
 | NAT gateway on `AzureFirewallSubnet` | [`az-tf-mlz-nat-gateway`](https://github.com/fortytwoservices/az-tf-mlz-nat-gateway) |
 | Azure Bastion | [`az-tf-mlz-bastion`](https://github.com/fortytwoservices/az-tf-mlz-bastion) |
@@ -42,8 +42,10 @@ route a multi-hub and spoke topology".
   NIC is required then), and each other region's `routing_supernet` to that region's firewall.
   `GatewaySubnet` sends each spoke's exact prefix (`spoke_address_prefixes`) and the other regions to the
   hub's firewall, so traffic from on-premises is inspected both ways: add a spoke's prefix before vending
-  it. Both keep gateway route propagation on. Spokes get `spoke_default_routes` from the contract, with
-  propagation off.
+  it. Both keep gateway route propagation on. A route table's routes are written in its body: Azure
+  replaces them with whatever a write of the table carries, so routes written as child resources are
+  deleted by the next change to the table (seen in the sandbox). Spokes get `spoke_default_routes` from
+  the contract, with propagation off.
 - **The mesh.** Every pair of hubs is peered both ways, with forwarded traffic allowed and no gateway
   transit between hubs (`mesh_peering_enabled`). Microsoft recommends this for two regions and Virtual WAN
   beyond.
@@ -77,6 +79,7 @@ The following resources are used by this module:
 
 - [azapi_resource.private_dns_resource_group](https://registry.terraform.io/providers/Azure/azapi/latest/docs/resources/resource) (resource)
 - [azapi_resource.resource_group](https://registry.terraform.io/providers/Azure/azapi/latest/docs/resources/resource) (resource)
+- [azapi_resource.route_table](https://registry.terraform.io/providers/Azure/azapi/latest/docs/resources/resource) (resource)
 
 <!-- markdownlint-disable MD013 -->
 ## Required Inputs
@@ -345,6 +348,7 @@ Description: Paths in each resource's `body` whose changes the AzAPI provider ig
 Paths use dot notation, for example `properties.dhcpOptions`. Individual list items cannot be targeted; ignore the whole list property instead. Configuration changes at an ignored path are **not** sent to Azure until that path is removed from the list. Changes take effect only after an apply, because the value is held in provider-private state.
 
 - `resources_resource_groups` - Ignored body paths for the resource groups.
+- `network_route_tables` - Ignored body paths for the route tables (their routes are `properties.routes`).
 - `network_virtual_networks` - Slot for the hub virtual networks, `Azure/avm-res-network-virtualnetwork/azurerm`'s `ignore_body_changes`; the hub peerings use its `virtual_networks_virtual_network_peerings` slot.
 - `network_azure_firewalls` - Slot for `az-tf-mlz-azure-firewall`, shaped like its `ignore_body_changes`.
 - `network_nat_gateways` - Slot for `az-tf-mlz-nat-gateway`, shaped like its `ignore_body_changes`.
@@ -352,13 +356,14 @@ Paths use dot notation, for example `properties.dhcpOptions`. Individual list it
 - `network_dns_resolvers` - Slot for `az-tf-mlz-dns-resolver`, shaped like its `ignore_body_changes` (without the rulesets, which this module does not create).
 - `network_virtual_network_gateways` - Slot for `az-tf-mlz-virtual-network-gateway` (the VPN and the ExpressRoute gateways), shaped like its `ignore_body_changes`.
 
-The route tables (`Azure/avm-ptn-alz-sub-vending/azure//modules/route-table`) and the private DNS zones (`Azure/avm-ptn-network-private-link-private-dns-zones/azurerm`) take no ignored paths.
+The private DNS zones (`Azure/avm-ptn-network-private-link-private-dns-zones/azurerm`) take no ignored paths.
 
 Type:
 
 ```hcl
 object({
     resources_resource_groups = optional(list(string), [])
+    network_route_tables      = optional(list(string), [])
 
     network_virtual_networks = optional(object({
       virtual_networks = optional(list(string), [])
@@ -528,7 +533,7 @@ Default: `null`
 Description: Override the AzAPI `<provider>/<resource>@<api-version>` strings used by this module and the modules it calls. Each key defaults to a tested value; supply only the keys you want to override.
 
 - `resources_resource_groups` - The resource groups.
-- `network_route_tables` - Slot for `Azure/avm-ptn-alz-sub-vending/azure//modules/route-table`: `this` (the route tables) and `route` (their routes). Defaults live in that module.
+- `network_route_tables` - The route tables of `AzureFirewallSubnet` and `GatewaySubnet`, with their routes.
 - `network_azure_firewalls` - Slot for `az-tf-mlz-azure-firewall`, shaped like its `resource_types`. Defaults live in that module.
 - `network_nat_gateways` - Slot for `az-tf-mlz-nat-gateway`, shaped like its `resource_types`. Defaults live in that module.
 - `network_bastion_hosts` - Slot for `az-tf-mlz-bastion`, shaped like its `resource_types`. Defaults live in that module.
@@ -542,11 +547,8 @@ Type:
 ```hcl
 object({
     resources_resource_groups = optional(string, "Microsoft.Resources/resourceGroups@2025-04-01")
+    network_route_tables      = optional(string, "Microsoft.Network/routeTables@2025-07-01")
 
-    network_route_tables = optional(object({
-      this  = optional(string)
-      route = optional(string)
-    }), {})
     network_azure_firewalls = optional(object({
       network_azure_firewalls        = optional(string)
       authorization_locks            = optional(string)
@@ -756,18 +758,6 @@ Version: v0.1.0
 Source: git::https://github.com/fortytwoservices/az-tf-mlz-azure-firewall.git
 
 Version: v0.1.3
-
-### <a name="module_firewall_route_table"></a> [firewall\_route\_table](#module\_firewall\_route\_table)
-
-Source: Azure/avm-ptn-alz-sub-vending/azure//modules/route-table
-
-Version: 0.3.4
-
-### <a name="module_gateway_route_table"></a> [gateway\_route\_table](#module\_gateway\_route\_table)
-
-Source: Azure/avm-ptn-alz-sub-vending/azure//modules/route-table
-
-Version: 0.3.4
 
 ### <a name="module_hub_peering"></a> [hub\_peering](#module\_hub\_peering)
 

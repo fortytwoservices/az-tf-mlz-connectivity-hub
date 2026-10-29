@@ -31,13 +31,9 @@ override_module {
     }
   }
 }
-override_module {
-  target  = module.firewall_route_table
-  outputs = { resource_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-sdc/providers/Microsoft.Network/routeTables/rt-afw-sdc" }
-}
-override_module {
-  target  = module.gateway_route_table
-  outputs = { resource_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-sdc/providers/Microsoft.Network/routeTables/rt-vgw-sdc" }
+override_resource {
+  target = azapi_resource.route_table
+  values = { id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-sdc/providers/Microsoft.Network/routeTables/rt-sdc" }
 }
 override_module {
   target  = module.nat_gateway

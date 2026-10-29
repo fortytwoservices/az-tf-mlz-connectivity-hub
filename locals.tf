@@ -115,6 +115,11 @@ locals {
       },
     )
   }
+  # Both route tables of every hub, keyed `<hub key>/firewall` and `<hub key>/gateway`.
+  route_tables = merge(
+    { for key in keys(local.firewalls) : "${key}/firewall" => { hub = key, name = local.names[key].firewall_route_table, routes = local.firewall_routes[key] } },
+    { for key in keys(local.gateway_route_tables) : "${key}/gateway" => { hub = key, name = local.names[key].gateway_route_table, routes = local.gateway_routes[key] } },
+  )
   # What subscription vending puts on a spoke's route table, with `bgp_route_propagation_enabled = false`.
   spoke_default_routes = {
     for key, hub in var.hub_virtual_networks : key => hub.firewall == null ? null : {
@@ -136,7 +141,7 @@ locals {
       { for name, firewall in { firewall = hub.firewall } : name => {
         name                             = "AzureFirewallSubnet"
         address_prefix                   = firewall.subnet_address_prefix
-        route_table                      = { id = module.firewall_route_table[key].resource_id }
+        route_table                      = { id = azapi_resource.route_table["${key}/firewall"].id }
         nat_gateway                      = hub.nat_gateway == null ? null : { id = module.nat_gateway[key].resource_id }
         retry                            = var.retry
         timeouts                         = var.timeouts
@@ -152,7 +157,7 @@ locals {
       { for name, prefix in { gateway = hub.gateway_subnet_address_prefix } : name => {
         name                          = "GatewaySubnet"
         address_prefix                = prefix
-        route_table                   = contains(keys(local.gateway_route_tables), key) ? { id = module.gateway_route_table[key].resource_id } : null
+        route_table                   = contains(keys(local.gateway_route_tables), key) ? { id = azapi_resource.route_table["${key}/gateway"].id } : null
         retry                         = var.retry
         timeouts                      = var.timeouts
       } if prefix != null },

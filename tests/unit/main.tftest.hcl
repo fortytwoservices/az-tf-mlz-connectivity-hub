@@ -40,13 +40,13 @@ override_module {
   target  = module.hub_peering
   outputs = { resource_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-sdc/providers/Microsoft.Network/virtualNetworks/vnet-sdc/virtualNetworkPeerings/peer" }
 }
-override_module {
-  target  = module.firewall_route_table
-  outputs = { resource_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-sdc/providers/Microsoft.Network/routeTables/rt-afw-sdc" }
+override_resource {
+  target = azapi_resource.route_table["swedencentral/firewall"]
+  values = { id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-sdc/providers/Microsoft.Network/routeTables/rt-afw-sdc" }
 }
-override_module {
-  target  = module.gateway_route_table
-  outputs = { resource_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-sdc/providers/Microsoft.Network/routeTables/rt-vgw-sdc" }
+override_resource {
+  target = azapi_resource.route_table["swedencentral/gateway"]
+  values = { id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-sdc/providers/Microsoft.Network/routeTables/rt-vgw-sdc" }
 }
 override_module {
   target = module.nat_gateway
@@ -261,6 +261,27 @@ run "full_hub" {
     })
     error_message = "GatewaySubnet should route each spoke to the firewall: ${jsonencode(local.gateway_routes.swedencentral)}."
   }
+  # The routes travel in the table's body, so every write carries them all.
+  assert {
+    condition = jsonencode(azapi_resource.route_table["swedencentral/gateway"].body) == jsonencode({
+      properties = {
+        disableBgpRoutePropagation = false
+        routes = [
+          { name = "spoke-app1", properties = { addressPrefix = "10.100.8.0/24", nextHopType = "VirtualAppliance", nextHopIpAddress = "10.100.0.4" } },
+          { name = "spoke-app2", properties = { addressPrefix = "10.100.9.0/24", nextHopType = "VirtualAppliance", nextHopIpAddress = "10.100.0.4" } },
+        ]
+      }
+    })
+    error_message = "The gateway route table's body should hold its routes, sorted by name, with propagation on: ${jsonencode(azapi_resource.route_table["swedencentral/gateway"].body)}."
+  }
+  assert {
+    condition     = azapi_resource.route_table["swedencentral/firewall"].type == "Microsoft.Network/routeTables@2025-07-01" && azapi_resource.route_table["swedencentral/firewall"].name == "rt-afw-sdc" && azapi_resource.route_table["swedencentral/gateway"].name == "rt-vgw-sdc" && azapi_resource.route_table["swedencentral/firewall"].parent_id == azapi_resource.resource_group["swedencentral"].id
+    error_message = "Each route table should be created in the hub's resource group with its name."
+  }
+  assert {
+    condition     = jsonencode(azapi_resource.route_table["swedencentral/firewall"].list_unique_id_property) == jsonencode({ "properties.routes" = "name" }) && jsonencode(azapi_resource.route_table["swedencentral/firewall"].body.properties.routes) == jsonencode([{ name = "default", properties = { addressPrefix = "0.0.0.0/0", nextHopType = "Internet", nextHopIpAddress = null } }])
+    error_message = "The firewall route table should hold the default route, and routes should be compared by name."
+  }
   assert {
     condition = jsonencode(local.firewall_policies.swedencentral) == jsonencode({
       name                     = "afwp-sdc"
@@ -308,7 +329,7 @@ run "full_hub" {
     error_message = "The resolver should get only the settings with metrics, without logs."
   }
   assert {
-    condition     = output.hub_virtual_networks.swedencentral.vpn_gateway_resource_id == module.vpn_gateway["swedencentral"].resource_id && output.hub_virtual_networks.swedencentral.express_route_gateway_resource_id == module.express_route_gateway["swedencentral"].resource_id && output.hub_virtual_networks.swedencentral.gateway_route_table_resource_id == module.gateway_route_table["swedencentral"].resource_id
+    condition     = output.hub_virtual_networks.swedencentral.vpn_gateway_resource_id == module.vpn_gateway["swedencentral"].resource_id && output.hub_virtual_networks.swedencentral.express_route_gateway_resource_id == module.express_route_gateway["swedencentral"].resource_id && output.hub_virtual_networks.swedencentral.gateway_route_table_resource_id == azapi_resource.route_table["swedencentral/gateway"].id
     error_message = "The outputs should show both gateways and the gateway route table."
   }
   assert {

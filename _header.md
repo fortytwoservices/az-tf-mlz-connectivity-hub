@@ -10,7 +10,7 @@ blocks are MLZ modules and AVM's AzAPI modules.
 |---|---|
 | One resource group per hub (and one for the private DNS zones) | this module |
 | Hub virtual networks, their subnets and the peerings between hubs | `Azure/avm-res-network-virtualnetwork/azurerm` 0.22.3 (AzAPI) |
-| Route tables of `AzureFirewallSubnet` and `GatewaySubnet`, with their routes | `Azure/avm-ptn-alz-sub-vending/azure//modules/route-table` 0.3.4 (AzAPI) |
+| Route tables of `AzureFirewallSubnet` and `GatewaySubnet`, their routes in the table's body | this module |
 | Firewall and policy, with their public IP addresses | [`az-tf-mlz-azure-firewall`](https://github.com/fortytwoservices/az-tf-mlz-azure-firewall) |
 | NAT gateway on `AzureFirewallSubnet` | [`az-tf-mlz-nat-gateway`](https://github.com/fortytwoservices/az-tf-mlz-nat-gateway) |
 | Azure Bastion | [`az-tf-mlz-bastion`](https://github.com/fortytwoservices/az-tf-mlz-bastion) |
@@ -40,8 +40,10 @@ route a multi-hub and spoke topology".
   NIC is required then), and each other region's `routing_supernet` to that region's firewall.
   `GatewaySubnet` sends each spoke's exact prefix (`spoke_address_prefixes`) and the other regions to the
   hub's firewall, so traffic from on-premises is inspected both ways: add a spoke's prefix before vending
-  it. Both keep gateway route propagation on. Spokes get `spoke_default_routes` from the contract, with
-  propagation off.
+  it. Both keep gateway route propagation on. A route table's routes are written in its body: Azure
+  replaces them with whatever a write of the table carries, so routes written as child resources are
+  deleted by the next change to the table (seen in the sandbox). Spokes get `spoke_default_routes` from
+  the contract, with propagation off.
 - **The mesh.** Every pair of hubs is peered both ways, with forwarded traffic allowed and no gateway
   transit between hubs (`mesh_peering_enabled`). Microsoft recommends this for two regions and Virtual WAN
   beyond.
