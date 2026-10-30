@@ -23,6 +23,14 @@ module "firewall" {
   ignore_body_changes = var.ignore_body_changes.network_azure_firewalls
   retry               = var.retry
   timeouts            = var.timeouts
+
+  # After every write to the hub virtual networks (and through them the route tables and NAT gateways): a
+  # policy update makes Azure (the NFV resource provider) push the policy to its firewall, and that push
+  # failed, unretried, while a virtual network update held the firewall's subnet in `Updating`
+  # (`ReferencedResourceNotProvisioned`), leaving the firewall faulted and the policy update failed
+  # (integration test, 2026-10-29). The module reads nothing from Azure while it has no role assignments,
+  # so this only orders the writes; revisit if role assignments come in.
+  depends_on = [module.hub_virtual_network, module.hub_peering]
 }
 
 # On AzureFirewallSubnet, the firewall's outbound path (Microsoft Learn, "Scale SNAT ports with Azure NAT
