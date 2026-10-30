@@ -1,4 +1,5 @@
-# A resource group for one integration test run, and the identity running the test.
+# A name suffix and the subscription for one integration test run; the module creates its own resource
+# groups, named rg-mlz-hub-it-<suffix> and rg-mlz-hub-it-pdns-<suffix>.
 terraform {
   required_providers {
     azapi = {
@@ -20,23 +21,12 @@ resource "random_string" "suffix" {
   upper   = false
 }
 
-resource "azapi_resource" "resource_group" {
-  type      = "Microsoft.Resources/resourceGroups@2024-11-01"
-  name      = "rg-mlz-it-${random_string.suffix.result}"
-  parent_id = "/subscriptions/${data.azapi_client_config.current.subscription_id}"
-  location  = "norwayeast"
-}
-
 output "location" {
-  value = azapi_resource.resource_group.location
+  value = "swedencentral"
 }
 
-output "object_id" {
-  value = data.azapi_client_config.current.object_id
-}
-
-output "resource_group_id" {
-  value = azapi_resource.resource_group.id
+output "parent_id" {
+  value = "/subscriptions/${data.azapi_client_config.current.subscription_id}"
 }
 
 output "suffix" {
