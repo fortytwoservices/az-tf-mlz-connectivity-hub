@@ -39,4 +39,11 @@ resource "azapi_resource" "route_table" {
       delete = timeouts.value.delete
     }
   }
+
+  # Azure refuses to delete a table a subnet uses (`InUseRouteTableCannotBeDeleted`; az-tf-mlz-route-table's
+  # integration test), so a renamed table is created first and the subnet moves to it before the old one
+  # goes. As az-tf-mlz-route-table v0.1.0 does, which this resource moves into later.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
