@@ -870,3 +870,63 @@ run "private_dns_resource_group_of_its_own" {
   }
   expect_failures = [azapi_resource.private_dns_resource_group]
 }
+
+run "routing_supernet_not_default_route" {
+  command = plan
+  variables {
+    hub_virtual_networks = {
+      swedencentral = { location = "swedencentral", address_space = ["10.100.0.0/22"], is_primary = true, name = "vnet-sdc", resource_group_name = "rg-sdc", routing_supernet = ["0.0.0.0/0"] }
+    }
+  }
+  expect_failures = [var.hub_virtual_networks]
+}
+
+# The inline `firewall_policy` is ignored with an existing policy: neither validated nor published.
+run "existing_policy_ignores_inline_settings" {
+  command   = apply
+  state_key = "existing_policy_inline"
+
+  variables {
+    hub_virtual_networks = {
+      swedencentral = {
+        location            = "swedencentral"
+        address_space       = ["10.100.0.0/22"]
+        is_primary          = true
+        name                = "vnet-sdc"
+        resource_group_name = "rg-sdc"
+        firewall = {
+          name                             = "afw-sdc"
+          sku_tier                         = "Basic"
+          subnet_address_prefix            = "10.100.0.0/26"
+          management_subnet_address_prefix = "10.100.0.64/26"
+          public_ip_name                   = "pip-afw-sdc"
+          management_public_ip_name        = "pip-afwm-sdc"
+          route_table_name                 = "rt-afw-sdc"
+          firewall_policy_id               = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-sdc/providers/Microsoft.Network/firewallPolicies/afwp-shared"
+          firewall_policy                  = { base_policy_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-sdc/providers/Microsoft.Network/firewallPolicies/afwp-base", dns_proxy_enabled = true }
+        }
+      }
+    }
+  }
+
+  assert {
+    condition     = output.connectivity.base_firewall_policy_id == null && local.firewall_policies.swedencentral == null
+    error_message = "With an existing policy, the contract should publish no base policy from the ignored inline object."
+  }
+}
+
+# Null timeouts (allowed by the AVM spec) mean the providers' and modules' own defaults: no timeouts block on
+# this module's resources, and fields of null for the AVM modules, which read the fields.
+run "null_timeouts_use_defaults" {
+  command   = apply
+  state_key = "null_timeouts"
+
+  variables {
+    timeouts = null
+  }
+
+  assert {
+    condition     = azapi_resource.resource_group["swedencentral"].timeouts == null && jsonencode(local.avm_timeouts) == jsonencode({ create = null, read = null, update = null, delete = null })
+    error_message = "Null timeouts should leave this module's resources on the provider's defaults and hand the AVM modules an object of null fields."
+  }
+}

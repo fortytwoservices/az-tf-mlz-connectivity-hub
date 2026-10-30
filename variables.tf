@@ -201,16 +201,16 @@ DESCRIPTION
     condition = alltrue([for hub in var.hub_virtual_networks : (
       length(hub.address_space) > 0 &&
       alltrue([for range in concat(hub.address_space, hub.routing_supernet, values(hub.spoke_address_prefixes)) : can(cidrhost(range, 0))]) &&
-      !contains(values(hub.spoke_address_prefixes), "0.0.0.0/0")
+      alltrue([for range in concat(hub.routing_supernet, values(hub.spoke_address_prefixes)) : try(tonumber(split("/", range)[1]) > 0, false)])
     )])
-    error_message = "Each hub needs an `address_space`, and its `address_space`, `routing_supernet` and `spoke_address_prefixes` must be ranges in CIDR notation; `0.0.0.0/0` is not a spoke prefix (a default route on `GatewaySubnet` is not supported)."
+    error_message = "Each hub needs an `address_space`, and its `address_space`, `routing_supernet` and `spoke_address_prefixes` must be ranges in CIDR notation; a default route (`/0`) is neither a region's summary nor a spoke prefix: they become routes on the other hubs' and this hub's `GatewaySubnet`, which supports no default route, and next to the firewall subnet's own default route."
   }
   validation {
     condition = alltrue([for hub in var.hub_virtual_networks : hub.firewall == null ? true : (
       contains(["Basic", "Standard", "Premium"], hub.firewall.sku_tier) &&
-      !(hub.firewall.sku_tier == "Basic" && (hub.firewall.firewall_policy.dns_proxy_enabled == true || length(coalesce(hub.firewall.firewall_policy.dns_servers, [])) > 0))
+      !(hub.firewall.sku_tier == "Basic" && hub.firewall.firewall_policy_id == null && (hub.firewall.firewall_policy.dns_proxy_enabled == true || length(coalesce(hub.firewall.firewall_policy.dns_servers, [])) > 0))
     )])
-    error_message = "A firewall's `sku_tier` must be `Basic`, `Standard` or `Premium`, and a Basic firewall's policy takes no DNS settings (`dns_proxy_enabled`, `dns_servers`)."
+    error_message = "A firewall's `sku_tier` must be `Basic`, `Standard` or `Premium`, and the policy the module creates for a Basic firewall takes no DNS settings (`dns_proxy_enabled`, `dns_servers`)."
   }
   validation {
     condition = alltrue([for hub in var.hub_virtual_networks : hub.firewall == null ? true : alltrue([

@@ -28,7 +28,7 @@ DESCRIPTION
         spoke_default_routes    = local.spoke_default_routes[key]
       }
     }
-    base_firewall_policy_id       = try(var.hub_virtual_networks[local.primary_key].firewall.firewall_policy.base_policy_id, null)
+    base_firewall_policy_id       = try(local.firewall_policies[local.primary_key].base_policy_id, null)
     private_dns_zone_ids          = local.private_dns_zone_ids
     private_dns_resource_group_id = one(azapi_resource.private_dns_resource_group[*].id)
   }

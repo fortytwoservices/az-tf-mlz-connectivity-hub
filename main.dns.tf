@@ -48,7 +48,7 @@ module "private_dns_zones" {
   }
   tags = var.tags
   timeouts = {
-    dns_zones  = { create = try(var.timeouts.create, null), read = try(var.timeouts.read, null), update = try(var.timeouts.update, null), delete = try(var.timeouts.delete, null) }
-    vnet_links = { create = try(var.timeouts.create, null), read = try(var.timeouts.read, null), update = try(var.timeouts.update, null), delete = try(var.timeouts.delete, null) }
+    dns_zones  = local.avm_timeouts
+    vnet_links = local.avm_timeouts
   }
 }

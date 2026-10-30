@@ -46,6 +46,14 @@ locals {
       [for address in [lookup(local.dns_resolver_inbound_ip_addresses, key, null)] : address if address != null]
     )
   }
+  # For the AVM modules, which read the fields of `timeouts` and so refuse null: a null field takes their
+  # own default.
+  avm_timeouts = {
+    create = try(var.timeouts.create, null)
+    read   = try(var.timeouts.read, null)
+    update = try(var.timeouts.update, null)
+    delete = try(var.timeouts.delete, null)
+  }
   # Azure offers no log categories on a resolver (az-tf-mlz-dns-resolver refuses `logs`).
   dns_resolver_diagnostic_settings = { for key, setting in var.diagnostic_settings : key => merge(setting, { logs = [] }) if length(setting.metrics) > 0 }
 }
@@ -144,7 +152,7 @@ locals {
         route_table                      = { id = azapi_resource.route_table["${key}/firewall"].id }
         nat_gateway                      = hub.nat_gateway == null ? null : { id = module.nat_gateway[key].resource_id }
         retry                            = var.retry
-        timeouts                         = var.timeouts
+        timeouts                         = local.avm_timeouts
       } if firewall != null },
       # Azure associates its own route table here; a customer's can disrupt the firewall (Microsoft Learn,
       # "Azure Firewall Management NIC").
@@ -152,34 +160,34 @@ locals {
         name                                      = "AzureFirewallManagementSubnet"
         address_prefix                            = prefix
         retry                                     = var.retry
-        timeouts                                  = var.timeouts
+        timeouts                                  = local.avm_timeouts
       } if prefix != null },
       { for name, prefix in { gateway = hub.gateway_subnet_address_prefix } : name => {
         name                          = "GatewaySubnet"
         address_prefix                = prefix
         route_table                   = contains(keys(local.gateway_route_tables), key) ? { id = azapi_resource.route_table["${key}/gateway"].id } : null
         retry                         = var.retry
-        timeouts                      = var.timeouts
+        timeouts                      = local.avm_timeouts
       } if prefix != null },
       { for name, bastion in { bastion = hub.bastion } : name => {
         name                           = "AzureBastionSubnet"
         address_prefix                 = bastion.subnet_address_prefix
         retry                          = var.retry
-        timeouts                       = var.timeouts
+        timeouts                       = local.avm_timeouts
       } if bastion != null },
       { for name, resolver in { dns_resolver_inbound = hub.dns_resolver } : name => {
         name                                         = resolver.inbound_subnet_name
         address_prefix                               = resolver.inbound_subnet_address_prefix
         delegations                                  = [{ name = "Microsoft.Network.dnsResolvers", service_delegation = { name = "Microsoft.Network/dnsResolvers" } }]
         retry                                        = var.retry
-        timeouts                                     = var.timeouts
+        timeouts                                     = local.avm_timeouts
       } if resolver != null },
       { for name, resolver in { dns_resolver_outbound = hub.dns_resolver } : name => {
         name                                          = resolver.outbound_subnet_name
         address_prefix                                = resolver.outbound_subnet_address_prefix
         delegations                                   = [{ name = "Microsoft.Network.dnsResolvers", service_delegation = { name = "Microsoft.Network/dnsResolvers" } }]
         retry                                         = var.retry
-        timeouts                                      = var.timeouts
+        timeouts                                      = local.avm_timeouts
       } if try(resolver.outbound_subnet_address_prefix, null) != null },
     )
   }

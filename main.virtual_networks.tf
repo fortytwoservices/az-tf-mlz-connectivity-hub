@@ -15,7 +15,7 @@ module "hub_virtual_network" {
   tags                 = var.tags
   ignore_body_changes  = var.ignore_body_changes.network_virtual_networks
   retry                = var.retry
-  timeouts             = var.timeouts
+  timeouts             = local.avm_timeouts
 }
 
 # Its own calls, so a hub's virtual network does not wait for the other hubs'. Spoke traffic crosses the
@@ -34,5 +34,5 @@ module "hub_peering" {
   use_remote_gateways          = false
   ignore_body_changes          = var.ignore_body_changes.network_virtual_networks.virtual_networks_virtual_network_peerings
   retry                        = var.retry
-  timeouts                     = var.timeouts
+  timeouts                     = local.avm_timeouts
 }
